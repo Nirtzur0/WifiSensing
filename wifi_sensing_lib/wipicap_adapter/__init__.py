@@ -1,1 +1,1 @@
-from .adapter import WiPiCapDataset, WiPiCapDataShapeConverter
+from .adapter import WifiSensingDataset, FeatureReshaper

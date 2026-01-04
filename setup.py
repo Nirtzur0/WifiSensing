@@ -15,7 +15,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'wifi-sensing-run=wifi_sensing_lib.pipeline:run_pipeline',
+            'wifi-sensing-run=wifi_sensing_lib.pipeline:main',
         ],
     },
 )
