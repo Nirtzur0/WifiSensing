@@ -1,30 +1,52 @@
 # Wi-Fi Sensing Library
 
-A unified library for Wi-Fi sensing, integrating `WiPiCap` for BFR extraction and `RF_CRATE` for deep learning models.
+A unified toolkit for Wi-Fi Sensing, integrating robust BFR extraction (`WiPiCap`) and advanced sensing algorithms (`RF_CRATE`).
 
 ## Features
-
-- **WiPiCap Integration**: Extracts Beamforming Reports (V-Matrices) from `.pcap` files using efficient Cython extensions.
-- **RF_CRATE Models**: Provides a suite of PyTorch models (e.g., Widar3, STFNet, RF-Net) for Wi-Fi sensing tasks.
-- **Unified Pipeline**: A simple API to process PCAP files and run inference.
-- **Database Extractor**: Tools to batch process raw dataset directories.
+- **Robust Extraction**: Extract Beamforming Reports (V-Matrices) from 802.11ac/ax (VHT/HE) traffic (PCAP files).
+- **SU-MIMO & Batching**: Support for Single-User MIMO handling and sliding-window batching for time-series models.
+- **Unified Interface**: Single CLI for extraction, training, and inference.
 
 ## Installation
 
 ```bash
+git clone https://github.com/Nirtzur0/wifi-sensing.git
+cd wifi-sensing
 pip install -e .
 ```
 
 ## Usage
 
-### Extractor
-Process a raw dataset directory structure:
+The library provides a unified command-line interface `wifi-sensing`.
+
+### 1. Data Extraction
+Extract V-Matrices from a structured raw dataset (folders of PCAP files).
 ```bash
-python3 -m wifi_sensing_lib.extractor --data_dir /path/to/Data/DatasetName
+wifi-sensing extract --data_dir /path/to/dataset_root
 ```
 
-### Inference Pipeline
-Run models on a capture file:
+### 2. Training
+Train or fine-tune models (e.g., Widar3, RF_CRATE).
 ```bash
-python3 -m wifi_sensing_lib.pipeline --pcap /path/to/capture.pcap --config wifi_sensing_lib/rfcrate/Configurations/widar3G6/widar3G6_widar3.yaml
+wifi-sensing train --config_file wifi_sensing_lib/configs/widar3G6/widar3G6_widar3.yaml
 ```
+
+### 3. Inference
+Run inference on a single PCAP file.
+```bash
+wifi-sensing infer --pcap data.pcap --config path/to/config.yaml --address STA_MAC_ADDRESS
+```
+
+## Configuration
+- **Model Configs**: Located in `wifi_sensing_lib/configs/`.
+- **Training Batching**: Set `seq_length` and `stride` in the YAML config to control sliding window size.
+
+## Project Structure
+- `wifi_sensing_lib/`: Main package.
+- `backend/`: Low-level processing and CSI extraction (`csi_backend`).
+- `data/`: Datasets and data loading utilities.
+- `models/`: Model architectures (RF_CRATE, etc.).
+- `training/`: Training loops and utilities.
+- `inference/`: Inference pipelines.
+- `visualization/`: Plotting tools (`BFRPlotter`).
+- `cli.py`: Entry point for the CLI.

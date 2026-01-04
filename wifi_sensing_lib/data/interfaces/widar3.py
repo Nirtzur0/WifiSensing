@@ -2,7 +2,8 @@ import glob, os, math
 from random import shuffle, seed
 from CSIKit.reader import IWLBeamformReader
 from torch.utils.data import Dataset, DataLoader
-from .utils import get_CSI, preprocess_CSI, get_dfs, get_csi_dfs
+from ..utils import get_CSI, preprocess_CSI, get_dfs, get_csi_dfs
+from ..transforms import AddComplexNoise
 from tqdm import tqdm
 import torch
 import yaml
@@ -409,6 +410,7 @@ class Widar3_Dataset(Dataset):
             print("The augmentation ratio is: ", self.augmentation_ratio)
         except:
             self.augmentation_ratio = 0
+        self.noise_transform = AddComplexNoise(self.augmentation_ratio)
 
         self.select_rx = config['select_rx']
         self.parse_paths_labels()
@@ -698,42 +700,8 @@ class Widar3_Dataset(Dataset):
             user_id = int(file_path.split("/")[-1].split("-")[0][4:])
             orientation = int(file_path.split("/")[-1].split("-")[3])
             rx_id = int(file_path.split("/")[-1].split("-")[5].split(".")[0][1:])
-        if self.augmentation_ratio > 0:
-            # Apply data augmentation by adding random noise
-            if isinstance(csi, np.ndarray):
-                if np.iscomplexobj(csi):
-                    # For complex data, add noise to the magnitude
-                    magnitude = np.abs(csi)
-                    phase = np.angle(csi)
-                    mean_magnitude = np.mean(magnitude)
-                    noise_level = mean_magnitude * self.augmentation_ratio
-                    noise = np.random.normal(0, noise_level, magnitude.shape)
-                    augmented_magnitude = magnitude + noise
-                    # Convert back to complex
-                    csi = augmented_magnitude * np.exp(1j * phase)
-                else:
-                    # For real data, add noise directly
-                    mean_value = np.mean(np.abs(csi))
-                    noise_level = mean_value * self.augmentation_ratio
-                    noise = np.random.normal(0, noise_level, csi.shape)
-                    csi = csi + noise
-            elif isinstance(csi, torch.Tensor):
-                if torch.is_complex(csi):
-                    # For complex tensor, add noise to the magnitude
-                    magnitude = torch.abs(csi)
-                    phase = torch.angle(csi)
-                    mean_magnitude = torch.mean(magnitude)
-                    noise_level = mean_magnitude * self.augmentation_ratio
-                    noise = torch.randn_like(magnitude) * noise_level
-                    augmented_magnitude = magnitude + noise
-                    # Convert back to complex
-                    csi = augmented_magnitude * torch.exp(1j * phase)
-                else:
-                    # For real tensor, add noise directly
-                    mean_value = torch.mean(torch.abs(csi))
-                    noise_level = mean_value * self.augmentation_ratio
-                    noise = torch.randn_like(csi) * noise_level
-                    csi = csi + noise
+        # Apply data augmentation
+        csi = self.noise_transform(csi)
         return csi, torch.tensor(label), torch.tensor(user_id), torch.tensor(orientation), torch.tensor(rx_id)
     
     def get_label_name(self, label):

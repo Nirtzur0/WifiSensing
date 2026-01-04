@@ -17,7 +17,7 @@ from multiprocessing import Pool
 import matplotlib.pyplot as plt
 from scipy.io import loadmat, savemat
 import pandas as pd
-from .utils import get_CSI, preprocess_CSI, get_dfs, get_csi_dfs
+from ..utils import get_CSI, preprocess_CSI, get_dfs, get_csi_dfs
 import torch.nn.functional as F
 
 

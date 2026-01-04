@@ -10,12 +10,13 @@ setup(
         "pyyaml",
         "pyshark",
         "tqdm",
+        "matplotlib",
         "CSIKit",
         # WiPiCap/RF_CRATE are handled as local sources for now
     ],
     entry_points={
         'console_scripts': [
-            'wifi-sensing-run=wifi_sensing_lib.pipeline:main',
+            'wifi-sensing=wifi_sensing_lib.cli:main',
         ],
     },
 )

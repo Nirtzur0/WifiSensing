@@ -2,7 +2,7 @@ import glob, os, math
 from random import shuffle, seed
 from CSIKit.reader import IWLBeamformReader
 from torch.utils.data import Dataset, DataLoader
-from .utils import get_CSI, preprocess_CSI, get_dfs, get_csi_dfs
+from ..utils import get_CSI, preprocess_CSI, get_dfs, get_csi_dfs
 import pandas as pd
 from tqdm import tqdm
 import torch

@@ -2,8 +2,8 @@ import argparse
 import yaml
 import torch
 from torch.utils.data import DataLoader
-from .wipicap_adapter import WifiSensingDataset, FeatureReshaper
-from .rfcrate_adapter import load_model
+from ..data import WifiSensingDataset, FeatureReshaper
+from ..models import get_registered_models
 
 class InferencePipeline:
     """
@@ -26,7 +26,11 @@ class InferencePipeline:
     def _load_model(self):
         model_name = self.config['model_name']
         try:
-            model = load_model(model_name, self.config, self.device)
+            model = get_registered_models(model_name, self.config)
+            # handle case where get_registered_models returns (model, decoder)
+            if isinstance(model, tuple):
+                 model = model[0]
+            model = model.to(self.device)
             model.eval()
             print(f"Model '{model_name}' loaded successfully on {self.device}.")
             return model

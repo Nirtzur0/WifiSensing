@@ -19,10 +19,10 @@ from timm.scheduler import CosineLRScheduler
 from timm.loss.cross_entropy import LabelSmoothingCrossEntropy
 from lion_pytorch import Lion
 # Datasets
-from Datasets import *
+from ..data import *
 # models
-from Models import *
-from func_utils import *
+from ..models import *
+from .utils import *
 
 
 
@@ -34,58 +34,72 @@ if __name__ == "__main__":
     parser.add_argument("--pretrained_model", type=str, default=None, help="The file path of the pretrained model weights")
     args = parser.parse_args()
     
-    if args.mode == 1:
+def run_experiment(config_file, mode=0, cuda_index=0, pretrained_model=None):
+    """
+    Unified entry point for training and testing.
+    """
+    
+    if mode == 1:
         print("Testing only!")
-        if args.pretrained_model == None:
+        if pretrained_model == None:
             print("Please provide the pretrained model weights!")
-            exit
-    elif args.mode == 2:
+            return
+    elif mode == 2:
         print("Finetuning and Testing!")
-        if args.pretrained_model == None:
+        if pretrained_model == None:
             print("Please provide the pretrained model weights!")
-            exit
-    elif args.mode == 3:
+            return
+    elif mode == 3:
         print("Check the pipeline!")
         num_epochs = 1
     else:
         print("Training and Testing!")
         
-    # loading the configuration file #######################################
-    config_file_name = args.config_file + '.yaml'
-    all_yaml_files = []
-    all_yaml_file_paths = []
-    for root, dirs, files in os.walk("Configurations"):
-        for file in files:
-            if file.endswith(".yaml"):
-                all_yaml_files.append(file)
-                all_yaml_file_paths.append(os.path.join(root, file))
-    if config_file_name not in all_yaml_files:
-        print("Configuration file name is: ",config_file_name)
-        print("The configuration file is not found! Please check the file name!")
-        exit
+    # Loading the configuration file
+    # If config_file is a path, use it. If it's a name, look in Configurations.
+    if os.path.exists(config_file):
+        config_file_path = config_file
+        print("The configuration file is found at: ", config_file_path)
+        with open(config_file_path, 'r') as fd:
+            config = yaml.load(fd, Loader=yaml.FullLoader)
     else:
-        # if there are multiple configuration files with the same name, print all the locations
-        if all_yaml_files.count(config_file_name) > 1:
-            print("The configuration file is: ",config_file_name)
-            print("There are multiple configuration files with the same name!")
-            for i in range(all_yaml_files.count(config_file_name)):
-                print(all_yaml_file_paths[all_yaml_files.index(config_file_name, i)])
-            exit
+        # This might fail if run from outside headers, so we should rely on absolute paths from CLI
+        config_file_name = config_file + '.yaml'
+        all_yaml_files = []
+        all_yaml_file_paths = []
+        
+        # Look in wifi_sensing_lib/configs (relative to this file)
+        base_configs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs")
+        
+        for root, dirs, files in os.walk(base_configs_dir):
+             for file in files:
+                if file.endswith(".yaml"):
+                    all_yaml_files.append(file)
+                    all_yaml_file_paths.append(os.path.join(root, file))
+        if config_file_name not in all_yaml_files:
+            print("Configuration file name is: ",config_file_name)
+            print("The configuration file is not found! Please check the file name!")
+            return
         else:
-            config_file_path = all_yaml_file_paths[all_yaml_files.index(config_file_name)]
+            if all_yaml_files.count(config_file_name) > 1:
+                 # ... duplicate handling ...
+                 config_file_path = all_yaml_file_paths[all_yaml_files.index(config_file_name)]
+            else:
+                 config_file_path = all_yaml_file_paths[all_yaml_files.index(config_file_name)]
             print("The configuration file is found at: ",config_file_path)
             with open(config_file_path, 'r') as fd:
                 config = yaml.load(fd, Loader=yaml.FullLoader)
+
     # traverse the configuration file if any value is a string: 'None', convert it to None
     for key, value in config.items():
         if value == 'None':
             config[key] = None
-    config['cuda_index'] = args.cuda_index
+    config['cuda_index'] = cuda_index
     
-    if args.mode == 3:
+    if mode == 3:
         config['num_epochs'] = 1
     
-    config['tqdm_disable'] = False  #!!! set it to True if you don't want to see the tqdm bar
+    config['tqdm_disable'] = False 
     
     tensorboard_folder = config['tensorboard_folder']
     if not os.path.exists(tensorboard_folder):
@@ -93,15 +107,15 @@ if __name__ == "__main__":
     trained_model_folder = config['trained_model_folder']
     if not os.path.exists(trained_model_folder):
         os.makedirs(trained_model_folder)
-    log_folder = config['log_folder']   # save all the outputs records when testing
-    log_enable = config['log_enable']   # if log_enable is False, the log folder will not be created
+    log_folder = config['log_folder']   
+    log_enable = config['log_enable']   
     if not os.path.exists(log_folder) and log_enable:
         os.makedirs(log_folder)
     
     try: 
-        model_save_enable = config['model_save_enable'] # if model_save_enable is False, the model weights will not be saved
+        model_save_enable = config['model_save_enable'] 
     except:
-        model_save_enable = True # by default, save the model weights
+        model_save_enable = True 
     
     os.environ["CUDA_VISIBLE_DEVICES"] = str(config['cuda_index'])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -113,12 +127,14 @@ if __name__ == "__main__":
     np.random.seed(config['init_rand_seed'])
     
     localtime = time.localtime(time.time())
-    if args.mode == 1:
-        log_file_name = f"{args.config_file}_{config['model_name']}_{time.strftime('%m%d%H%M%S', localtime)}_test"
-    elif args.mode == 2:
-        log_file_name = f"{args.config_file}_{config['model_name']}_{time.strftime('%m%d%H%M%S', localtime)}_finetune"
+    # Generate log file name based on config path basename to avoid full path issues
+    config_basename = os.path.basename(config_file).replace('.yaml', '')
+    if mode == 1:
+        log_file_name = f"{config_basename}_{config['model_name']}_{time.strftime('%m%d%H%M%S', localtime)}_test"
+    elif mode == 2:
+        log_file_name = f"{config_basename}_{config['model_name']}_{time.strftime('%m%d%H%M%S', localtime)}_finetune"
     else:
-        log_file_name = f"{args.config_file}_{config['model_name']}_{time.strftime('%m%d%H%M%S', localtime)}"
+        log_file_name = f"{config_basename}_{config['model_name']}_{time.strftime('%m%d%H%M%S', localtime)}"
     print("The log filename is: ",log_file_name)
 
     writer = SummaryWriter(config['tensorboard_folder'] + log_file_name)
@@ -150,6 +166,7 @@ if __name__ == "__main__":
         dataloader_make = make_RPI_dataloader
     else:
         print("The dataset name is wrong!")
+        return # Explicit return
         
     cross_domain = False
     if len(config['data_split']) ==3:
@@ -194,9 +211,9 @@ if __name__ == "__main__":
         decoder = None
         model.to(device)
     
-    if args.mode == 1 or args.mode == 2:
-        if args.mode == 2:
-            state_dict = torch.load(args.pretrained_model)
+    if mode == 1 or mode == 2:
+        if mode == 2:
+            state_dict = torch.load(pretrained_model)
             for key in list(state_dict.keys()):
                 if 'mlp_head' in key:
                     del state_dict[key]
@@ -206,7 +223,7 @@ if __name__ == "__main__":
                     print("deleted:", key)
             model.load_state_dict(state_dict, strict=False)
         else:
-            model.load_state_dict(torch.load(args.pretrained_model))
+            model.load_state_dict(torch.load(pretrained_model))
         print("The pretrained model weights are loaded!")
     else:
         if config['resume_training']: # if resume training, the model weights filename is config['trained_model_folder']
@@ -317,7 +334,10 @@ if __name__ == "__main__":
         raise NotImplementedError
     
     # training/finetuning  ########################################
-    if args.mode == 0:
+    best_model_weights = None
+    best_model_epoch = 0
+    
+    if mode == 0:
         print("Start training!")
         best_model_weights, best_model_epoch = train(model,train_loader,val_loader,data_sahpe_coverter,criterion,regularizer,regularizer_lambda,
                                                      rotary_physcis_prior_embedding,optimizer,scheduler,metric,config,log_file_name,writer,device,decoder=decoder)
@@ -327,9 +347,9 @@ if __name__ == "__main__":
         if model_save_enable:
             saved_model_path = config['trained_model_folder']+ log_file_name + '.pth'
             torch.save(best_model_weights, saved_model_path)
-    elif args.mode == 1:
+    elif mode == 1:
         print("Start testing!")
-    elif args.mode == 2 or args.mode == 3:
+    elif mode == 2 or mode == 3:
         print("Start finetuning or checking!")
         best_model_weights, best_model_epoch = train(model,train_loader,val_loader,data_sahpe_coverter,criterion,regularizer,regularizer_lambda,
                                                      rotary_physcis_prior_embedding,optimizer,scheduler,metric,config,log_file_name,writer,device,decoder=decoder)
@@ -383,3 +403,13 @@ if __name__ == "__main__":
         test_result_save_path = config['log_folder']+ log_file_name + '.pkl'
         pickle.dump(recordings, open(test_result_save_path, 'wb'))
         print("The test results are saved at: ",test_result_save_path)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Training and Testing')
+    parser.add_argument("--config_file", type=str, help="Configuration YAML file")
+    parser.add_argument("--cuda_index", type=int, default=0, help="The index of the cuda device")
+    parser.add_argument("--mode", type=int, default=0, help="0: train + test, 1: test only, 2: finetune + test, 3: check the pipeline")
+    parser.add_argument("--pretrained_model", type=str, default=None, help="The file path of the pretrained model weights")
+    args = parser.parse_args()
+    
+    run_experiment(args.config_file, args.mode, args.cuda_index, args.pretrained_model)
