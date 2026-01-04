@@ -74,7 +74,20 @@ def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False):
         raw_hex = packet.frame_raw.value
 
         # get values
-        timestamp = float(packet.frame_info.time_epoch)
+        # timestamp = float(packet.frame_info.time_epoch)
+        try:
+             timestamp = float(packet.frame_info.time_epoch)
+        except ValueError:
+             # Handle ISO format like 2022-07-06T09:43:17.826467072Z
+             ts_str = packet.frame_info.time_epoch
+             # Remove 'Z' if present
+             if ts_str.endswith('Z'):
+                 ts_str = ts_str[:-1]
+             # Python 3.11+ supports fromisoformat for this, but 3.12 should behave well. 
+             # However, too many decimals might confuse it?
+             # Let's simple parse manualy or use datetime
+             dt = datetime.fromisoformat(ts_str)
+             timestamp = dt.timestamp()
 
         # check VHT or HE
         category_code = int(raw_hex[96:98], 16)
@@ -97,7 +110,12 @@ def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False):
             codebook_info = int(he_mimo_control_bin[30], 2)
             bw = int(he_mimo_control_bin[32:34], 2)
             nr = int(he_mimo_control_bin[34:37], 2) + 1
+            nr = int(he_mimo_control_bin[34:37], 2) + 1
             nc = int(he_mimo_control_bin[37:], 2) + 1
+        else:
+            if verbose:
+                logger.warning(f"Unknown category code: {category_code}. Skipping packet.")
+            continue
 
         num_snr = nc
         (phi_size, psi_size) = phi_psi_matching[codebook_info]
@@ -111,6 +129,10 @@ def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False):
         psi_indices = [1, 0]
 
         angle_bits_order_len = min([nc, nr - 1]) * (2 * (nr - 1) - min(nc, nr - 1) + 1)
+        if angle_bits_order_len == 0:
+            if verbose:
+                logger.warning(f"angle_bits_order_len is 0 (nr={nr}, nc={nc}). Skipping packet.")
+            continue
         cnt = nr - 1
         while len(angle_bits_order) < angle_bits_order_len:
             for i in range(cnt):
@@ -153,6 +175,14 @@ def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False):
             v[subc] = mat_e
             # check if v is unitary
             assert np.all((np.sum(np.abs(mat_e)**2, axis=0)-1)<1e-5), f"v is not unitary {np.sum(np.abs(mat_e)**2, axis=0)}"
+        
+        # Check for consistency with previous packets
+        if len(vs) > 0:
+            if v.shape != vs[0].shape[1:]:
+                if verbose:
+                    logger.warning(f"Packet shape mismatch: {v.shape} vs {vs[0].shape[1:]}. Skipping.")
+                continue
+        
         vs.append(v[np.newaxis])
         ts.append(timestamp)
 
