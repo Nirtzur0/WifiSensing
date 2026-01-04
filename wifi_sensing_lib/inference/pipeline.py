@@ -59,8 +59,8 @@ class InferencePipeline:
                 x = self.converter.shape_convert(v)
                 print(f"Batch {i}: Input shape {x.shape}")
                 
-                # output = self.model(x)
-                # print(f"Batch {i}: Output shape {output.shape}")
+                output, feature_pre = self.model(x)
+                print(f"Batch {i}: Output shape {output.shape}")
                 
                 # For verification, we stop after first batch
                 if i >= 0:

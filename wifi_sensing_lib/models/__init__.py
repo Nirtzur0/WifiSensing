@@ -1,7 +1,7 @@
 from .swin_transformer import swin_t, swin_s, swin_b, swin_v2_s, swin_v2_b, swin_v2_t
 from .crate import crate_small, crate_base, crate_large, crate_tiny
 from .stfnet import stfnet_standard
-from .rfnet import rf_net
+from .rfnet import rf_net, RFNet
 from .slnet import slnet_standard
 from .widar3 import widar3_standard
 
