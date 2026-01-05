@@ -6,4 +6,7 @@ from .interfaces.OctoNetMini import OctonetMini, OctonetMini_data_shape_converte
 from .utils import get_csi_dfs, get_dfs
 from .interfaces.RPI import RPI_Dataset, RPI_data_shape_converter, make_RPI_dataloader
 from .interfaces.pcap_dataset import WifiSensingDataset, FeatureReshaper
+from .interfaces.pcap_training_dataset import PcapTrainingDataset
+from .interfaces.pcap_loaders import pcap_data_shape_converter, make_pcap_dataloader
 from .transforms import AddComplexNoise
+

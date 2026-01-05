@@ -164,6 +164,10 @@ def run_experiment(config_file, mode=0, cuda_index=0, pretrained_model=None):
         data_sahpe_coverter = RPI_data_shape_converter(config)
         dataset_get = RPI_Dataset
         dataloader_make = make_RPI_dataloader
+    elif config['dataset_name'] == 'pcap':
+        data_sahpe_coverter = pcap_data_shape_converter(config)
+        dataset_get = PcapTrainingDataset
+        dataloader_make = make_pcap_dataloader
     else:
         print("The dataset name is wrong!")
         return # Explicit return

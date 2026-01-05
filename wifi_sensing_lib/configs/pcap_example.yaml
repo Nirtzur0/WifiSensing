@@ -1,0 +1,65 @@
+# Example configuration for training on PCAP files
+# Dataset Configuration
+dataset_name: 'pcap'
+dataset_path: 'Data/MyDataset'  # Root directory containing PCAP files
+
+# Label Configuration
+label_type: 'activity'  # Options: 'activity', 'room', 'station'
+station_filter: null  # Optional: ['9C', '25', '89'] to filter specific stations
+cache_csi: false  # Set to true to cache extracted CSI data (uses more memory)
+
+# Data Processing
+seq_length: 100  # Temporal window size
+stride: 50  # Sliding window stride
+format: 'complex'  # Options: 'complex', 'amplitude', 'polar', 'cartesian', 'dfs'
+model_input_shape: 'BCHW-C'  # Model input format
+
+# Data Split
+data_split: [0.7, 0.15, 0.15]  # Train, validation, test split
+
+# Model Configuration
+model_name: 'rf_crate_base'
+num_classes: 21  # 21 activity labels (A-U)
+in_channels: 3  # Number of receive antennas
+image_size: [100, 64]  # [Time, Subcarriers]
+patch_size: [10, 8]
+feedforward: 'type1'
+relu_type: 'crelu'
+patch_embedding_method: 'conv_patch'
+mlp_head_type: 'crate_version'
+output_type: 'magnitude'
+
+# Training Configuration
+batch_size: 16
+num_epochs: 50
+lr: 0.0001
+weight_decay: 0.0001
+optimizer: 'AdamW'
+momentum: 0.9
+criterion: 'cross_entropy'
+metric: 'accuracy'
+
+# Scheduler
+warmup_steps: 10
+lower_lr_limit: 0.01
+
+# System
+cuda_index: 0
+num_workers: 4
+init_rand_seed: 42
+
+# Logging
+tensorboard_folder: 'runs/'
+trained_model_folder: 'checkpoints/'
+log_folder: 'logs/'
+log_enable: true
+model_save_enable: true
+resume_training: false
+
+# Optional: Subspace Regularization for RF-CRATE
+ssr: false
+ssr_lambda: 0.1
+normalize_feature_magnitude: true
+
+# Optional: Physics Prior Embedding
+ppe: null
