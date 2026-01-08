@@ -21,7 +21,8 @@ from typing import Any, Callable, List, Optional
 
 def complex_glorot_uniform(c_in, c_out_total, fft_list, fft_n, use_bias=True, name='complex_mat'):
     c_out = int(c_out_total/len(fft_list))
-    kernel = torch.empty((1, 1, int(c_in * c_out), int(fft_n))).cuda()
+    # Removed .cuda()
+    kernel = torch.empty((1, 1, int(c_in * c_out), int(fft_n)))
     kernel = torch.nn.init.xavier_uniform_(kernel)
     kernel_complex_org = torch.fft.fft(torch.complex(kernel, 0.*kernel))
     kernel_complex_org = kernel_complex_org.transpose(1, 2)
@@ -42,7 +43,8 @@ def complex_glorot_uniform(c_in, c_out_total, fft_list, fft_n, use_bias=True, na
 
     bias_complex_r = torch.zeros((c_out*len(fft_list)), requires_grad = True).detach()
     bias_complex_i = torch.zeros((c_out*len(fft_list)), requires_grad = True).detach()
-    bias_complex = torch.complex(bias_complex_r, bias_complex_i).cuda()
+    # Removed .cuda()
+    bias_complex = torch.complex(bias_complex_r, bias_complex_i)
     return kernel_complex_dict, bias_complex
 
 
@@ -60,6 +62,13 @@ def atten_merge(patch, kernel, bias):
     ## patch with shape (BATCH_SIZE, seg_num, ffn/2+1, c_in, ratio)
     ## kernel with shape (1, 1, 1, 1, ratio, ratio)
     ## bias with shpe (ratio)
+    # Ensure kernel and bias are on the same device as patch
+    device = patch.device
+    if isinstance(kernel, torch.Tensor) and kernel.device != device:
+        kernel = kernel.to(device)
+    if isinstance(bias, torch.Tensor) and bias.device != device:
+        bias = bias.to(device)
+        
     patch_atten = torch.sum(patch.unsqueeze(-1) * kernel, dim = 4)
     # patch_atten with shape (BATCH_SIZE, seg_num, ffn/2+1, c_in, ratio)
     patch_atten = torch.abs(patch_atten + bias)
@@ -69,12 +78,13 @@ def atten_merge(patch, kernel, bias):
 
 
 def complex_merge(merge_ratio):
-    kernel_r = torch.zeros((1, 1, 1, 1, merge_ratio, merge_ratio ), requires_grad=True).cuda()
-    kernel_i = torch.zeros((1, 1, 1, 1, merge_ratio, merge_ratio ), requires_grad=True).cuda()
+    # Removed .cuda()
+    kernel_r = torch.zeros((1, 1, 1, 1, merge_ratio, merge_ratio ), requires_grad=True)
+    kernel_i = torch.zeros((1, 1, 1, 1, merge_ratio, merge_ratio ), requires_grad=True)
     kernel_complex = torch.complex(kernel_r, kernel_i).detach()
 
-    bias_r = torch.zeros((merge_ratio), requires_grad = True).cuda()
-    bias_i = torch.zeros((merge_ratio), requires_grad = True).cuda()
+    bias_r = torch.zeros((merge_ratio), requires_grad = True)
+    bias_i = torch.zeros((merge_ratio), requires_grad = True)
     bias_complex = torch.complex(bias_r, bias_i).detach()
 
     return kernel_complex, bias_complex
@@ -135,7 +145,7 @@ class STFlayer(nn.Module):
         patch_fft_list = []
         patch_mask_list = []
         for idx in range(len(self.fft_n_list)):
-            patch_fft_list.append(0.)
+            patch_fft_list.append(torch.zeros(1, dtype=torch.cfloat).to(inputs.device)) # Initialize complex
             patch_mask_list.append([])
 
         inputs = inputs.reshape((inputs.size(0) * inputs.size(1), -1))

@@ -629,7 +629,7 @@ class Transformer(nn.Module):
                     nn.ModuleList(
                         [
                             PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                            PreNorm(dim, FeedForward(dim, dim, dropout=dropout, step_size=init_step_size))
+                            PreNorm(dim, FeedForward(dim, init_step_size=init_step_size))
                         ]
                     )
                 )
@@ -838,6 +838,12 @@ class RF_CRATE(nn.Module):
                 CReLU() if relu_type == 'crelu' else ZReLU() if relu_type == 'zrelu' else ModReLU() if relu_type == 'modrelu' else ComplexCardioid(),
                 ComplexLayerNorm(dim*2),
                 nn.Linear(dim * 2, num_classes, dtype=torch.cfloat),
+                ComplexMagnitude() if output_type == 'magnitude' else ComplexToAmpPhase(num_classes) if output_type == 'phase_amp' else ComplexToRealImag(num_classes) if output_type == 'real_imag' else ComplexToReal(),
+            )
+        elif mlp_head_type == 'linear':
+            self.mlp_head = nn.Sequential(
+                ComplexLayerNorm(dim),
+                nn.Linear(dim, num_classes, dtype=torch.cfloat),
                 ComplexMagnitude() if output_type == 'magnitude' else ComplexToAmpPhase(num_classes) if output_type == 'phase_amp' else ComplexToRealImag(num_classes) if output_type == 'real_imag' else ComplexToReal(),
             )
         else:

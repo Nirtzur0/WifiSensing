@@ -71,7 +71,7 @@ class FeatureReshaper:
         # Result layout typically: [B, T, S, Nr*Nc, Channels] or similar
         
         # Flatten antenna dim: [B, T, S, Nr*Nc] complex
-        batch = batch.view(b, t, s, nr*nc)
+        batch = batch.reshape(b, t, s, nr*nc)
         
         target_fmt = self.target_format
         if target_fmt == 'complex':
@@ -126,10 +126,11 @@ class FeatureReshaper:
                   # It matches!
                   pass
              elif model_shape == 'BTCHW':
-                  # [B, T, C, H, W]?? Widar3 DFS?
-                  # Widar3 DFS usually [Batch, T, F, S, Ant*C] ??
-                  # Let's support B2CNFT mainly for now as it's the DFS user.
-                  pass
+                  # Widar3 and similar models expecting [B, T, C, H, W]
+                  # Input batch: [B, C(2), S, Ant, F, T]
+                  # We map: T->T, F->H, others->C, W=1
+                  b, c, s, ant, f, t = batch.shape
+                  batch = batch.permute(0, 5, 1, 2, 3, 4).reshape(b, t, c*s*ant, f, 1)
              elif model_shape == 'BCHW':
                   # Flatten everything to [B, Channels, F, T] ?
                   # Channels = S * Ant * C
