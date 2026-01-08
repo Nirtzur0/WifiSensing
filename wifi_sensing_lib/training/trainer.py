@@ -262,10 +262,10 @@ def run_experiment(config_file, mode=0, cuda_index=0, pretrained_model=None):
     try:
         lower_lr_limit = config['lower_lr_limit']   
         lr_func = lambda step: min((step + 1) / (warmup_steps + 1e-8), lower_lr_limit + (1 - lower_lr_limit) * (math.cos(step / config['num_epochs'] * math.pi) + 1))
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_func, verbose=True)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_func)
     except:
         lr_func = lambda step: min((step + 1) / (warmup_steps + 1e-8), 0.5 * (math.cos(step / config['num_epochs'] * math.pi) + 1))
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_func, verbose=True)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_func)
 
     if config['criterion'] == 'mse':
         criterion = nn.MSELoss()

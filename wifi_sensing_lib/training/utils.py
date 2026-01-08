@@ -199,10 +199,14 @@ def train(model,train_loader,validation_loader,data_sahpe_coverter,criterion,reg
         if len(metric_all) > 0:
             metric_all = np.mean(metric_all)
             writer.add_scalar('validation metric (per sample)', metric_all, epoch)
-        writer.add_scalar('validation loss (per sample)', loss_all/ len(validation_loader), epoch)
-        if recon_criterion is not None:
-            writer.add_scalar('validation recon loss (per sample)', recon_loss_all/ len(validation_loader), epoch)
-        print(f'Epoch {epoch}, Average Loss (valid set) {loss_all/ len(validation_loader):.10f}, Average Reconstruction Loss (valid set) {recon_loss_all/ len(validation_loader):.10f}')
+            
+        if len(validation_loader) > 0:
+            writer.add_scalar('validation loss (per sample)', loss_all/ len(validation_loader), epoch)
+            if recon_criterion is not None:
+                writer.add_scalar('validation recon loss (per sample)', recon_loss_all/ len(validation_loader), epoch)
+            print(f'Epoch {epoch}, Average Loss (valid set) {loss_all/ len(validation_loader):.10f}, Average Reconstruction Loss (valid set) {recon_loss_all/ len(validation_loader):.10f}')
+        else:
+            print(f'Epoch {epoch}: Validation set is empty, skipping loss logging.')
 
         if loss_all<best_loss and (not np.isnan(loss_all)):
             best_model_weights = model.state_dict()
