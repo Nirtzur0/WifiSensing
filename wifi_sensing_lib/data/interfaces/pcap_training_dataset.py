@@ -203,7 +203,7 @@ class PcapTrainingDataset(Dataset):
         # Handle case where PCAP has no data
         if len(vs) == 0:
             # Return dummy data
-            v_tensor = torch.zeros(self.seq_length, 64, 3, 1, dtype=torch.complex64)
+            v_window = np.zeros((self.seq_length, 64, 3, 1), dtype=np.complex64)
         else:
             # Take a random window or the entire sequence
             if len(vs) >= self.seq_length:
@@ -218,9 +218,7 @@ class PcapTrainingDataset(Dataset):
                     ((0, self.seq_length - len(vs)), (0, 0), (0, 0), (0, 0)),
                     mode='constant'
                 )
-            
-            v_tensor = torch.tensor(v_window, dtype=torch.complex64)
-        
+
         # Get label based on label_type
         if self.label_type == 'activity':
             label = sample_info['activity_label']
@@ -230,13 +228,12 @@ class PcapTrainingDataset(Dataset):
             label = sample_info['station_label']
         else:
             label = sample_info['activity_label']  # Default
-        
-        # Return in format compatible with training system
-        # (data, label, user_id, orientation, rx_id)
+
+        # Return numpy arrays instead of tensors
         return (
-            v_tensor,
-            torch.tensor(label, dtype=torch.long),
-            torch.tensor(sample_info['station_label'], dtype=torch.long),
-            torch.tensor(0, dtype=torch.long),  # orientation placeholder
-            torch.tensor(0, dtype=torch.long)   # rx_id placeholder
+            v_window,
+            label,
+            sample_info['station_label'],
+            0,  # orientation placeholder
+            0   # rx_id placeholder
         )
