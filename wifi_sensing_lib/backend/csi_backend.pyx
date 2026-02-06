@@ -43,13 +43,25 @@ hex_to_bin = str.maketrans(
 )
 
 
-def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False):
-    p = pyshark.FileCapture(
+def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False, validate_unitary=False):
+    """
+    Extract V-matrices from a PCAP/PCAPNG containing VHT/HE compressed beamforming reports.
+
+    Notes
+    - Uses tshark/pyshark for parsing, which can be slow on large captures.
+    - `num_to_process` limits how many matching packets are decoded (useful for tests/smoke runs).
+    - Always closes the underlying capture to avoid leaking `tshark` processes.
+    """
+
+    cap = pyshark.FileCapture(
         pcap_file,
-        display_filter=f"wlan.fc.type_subtype == 0x000e && wlan.ta == {address}",
+        # Wireshark display filter syntax prefers `and` over shell-style `&&`.
+        display_filter=f"wlan.fc.type_subtype == 0x000e and wlan.ta == {address}",
         use_json=True,
-        include_raw=True
-    )._packets_from_tshark_sync()
+        include_raw=True,
+        keep_packets=False,
+    )
+    p = cap._packets_from_tshark_sync()
 
     # parameter setting
     phi_psi_matching = [(4.0, 2.0), (6.0, 4.0)]
@@ -59,138 +71,157 @@ def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False):
     vs = []
     p_cnt = 0
 
-    while True:
-        try:
-            packet = p.__next__()
-        except StopIteration:
-            break
+    try:
+        while True:
+            try:
+                packet = p.__next__()
+            except StopIteration:
+                break
 
-        p_cnt += 1
-        if num_to_process is not None and p_cnt > num_to_process:
-            break
-        if verbose:
-            logger.info(f"parsing {p_cnt} packets...")
-
-        raw_hex = packet.frame_raw.value
-
-        # get values
-        # timestamp = float(packet.frame_info.time_epoch)
-        try:
-             timestamp = float(packet.frame_info.time_epoch)
-        except ValueError:
-             # Handle ISO format like 2022-07-06T09:43:17.826467072Z
-             ts_str = packet.frame_info.time_epoch
-             # Remove 'Z' if present
-             if ts_str.endswith('Z'):
-                 ts_str = ts_str[:-1]
-             # Python 3.11+ supports fromisoformat for this, but 3.12 should behave well. 
-             # However, too many decimals might confuse it?
-             # Let's simple parse manualy or use datetime
-             dt = datetime.fromisoformat(ts_str)
-             timestamp = dt.timestamp()
-
-        # check VHT or HE
-        category_code = int(raw_hex[96:98], 16)
-        if category_code == 21:
-            # VHT
-            mimo_control_end_idx = 106
-            he_mimo_control = hex_flip(raw_hex[100:mimo_control_end_idx])
-            he_mimo_control_bin = bin(int(he_mimo_control, 16))[2:].zfill(24)
-            codebook_info = int(he_mimo_control_bin[13], 2)
-            bw = int(he_mimo_control_bin[16:18], 2)
-            nr = int(he_mimo_control_bin[18:21], 2) + 1
-            nc = int(he_mimo_control_bin[21:], 2) + 1
-        elif category_code == 30:
-            # HE
-            mimo_control_end_idx = 110
-            he_mimo_control = hex_flip(raw_hex[100:mimo_control_end_idx])
-            he_mimo_control_bin = bin(int(he_mimo_control, 16))[2:].zfill(40)
-            ru_end_index = int(he_mimo_control_bin[11:17], 2)
-            ru_start_index = int(he_mimo_control_bin[17:23], 2)
-            codebook_info = int(he_mimo_control_bin[30], 2)
-            bw = int(he_mimo_control_bin[32:34], 2)
-            nr = int(he_mimo_control_bin[34:37], 2) + 1
-            nr = int(he_mimo_control_bin[34:37], 2) + 1
-            nc = int(he_mimo_control_bin[37:], 2) + 1
-        else:
+            p_cnt += 1
+            if num_to_process is not None and p_cnt > num_to_process:
+                break
             if verbose:
-                logger.warning(f"Unknown category code: {category_code}. Skipping packet.")
-            continue
+                logger.info(f"parsing {p_cnt} packets...")
 
-        num_snr = nc
-        (phi_size, psi_size) = phi_psi_matching[codebook_info]
-        cbr_hex = hex_flip(raw_hex[mimo_control_end_idx : -8])
+            raw_hex = packet.frame_raw.value
 
-        # calc binary splitting rule
-        angle_bits_order = []
-        angle_type = []
-        angle_index = []
-        phi_indices = [0, 0]
-        psi_indices = [1, 0]
+            # timestamp
+            try:
+                timestamp = float(packet.frame_info.time_epoch)
+            except Exception:
+                # Handle ISO format like 2022-07-06T09:43:17.826467072Z
+                ts_str = str(packet.frame_info.time_epoch)
+                if ts_str.endswith("Z"):
+                    ts_str = ts_str[:-1]
+                if "." in ts_str:
+                    left, frac = ts_str.split(".", 1)
+                    # Keep at most microseconds for fromisoformat compatibility
+                    frac = re.sub(r"[^0-9].*$", "", frac)  # strip any timezone suffixes
+                    frac = (frac + "000000")[:6]
+                    ts_str = f"{left}.{frac}"
+                dt = datetime.fromisoformat(ts_str)
+                timestamp = dt.timestamp()
 
-        angle_bits_order_len = min([nc, nr - 1]) * (2 * (nr - 1) - min(nc, nr - 1) + 1)
-        if angle_bits_order_len == 0:
-            if verbose:
-                logger.warning(f"angle_bits_order_len is 0 (nr={nr}, nc={nc}). Skipping packet.")
-            continue
-        cnt = nr - 1
-        while len(angle_bits_order) < angle_bits_order_len:
-            for i in range(cnt):
-                angle_bits_order.append(phi_size)
-                angle_type.append("phi")
-                angle_index.append([phi_indices[0] + i, phi_indices[1]])
-            phi_indices[0] += 1
-            phi_indices[1] += 1
-            for i in range(cnt):
-                angle_bits_order.append(psi_size)
-                angle_type.append("psi")
-                angle_index.append([psi_indices[0] + i, psi_indices[1]])
-            psi_indices[0] += 1
-            psi_indices[1] += 1
-            cnt -= 1
-
-        num_subc = int(
-            (len(cbr_hex) - num_snr * 2)
-            * 4
-            // (phi_size * angle_type.count("phi") + psi_size * angle_type.count("psi"))
-        )
-
-        split_rule = np.zeros(angle_bits_order_len + 1)
-        split_rule[1:] = np.cumsum(angle_bits_order)
-        split_rule = split_rule.astype(np.int32)
-        angle_seq_len = split_rule[-1]
-        cbr, snr = hex_to_quantized_angle(
-            cbr_hex, num_snr, num_subc, angle_seq_len, split_rule
-        )
-
-        # V matrix recovery
-        v = np.zeros((num_subc, nr, nc), dtype=complex)
-        subc_len = len(angle_type)
-        for subc in range(num_subc):
-            angle_slice = cbr[subc * subc_len : (subc + 1) * subc_len]
-            angle_slice = [quantized_angle_formulas(t, a, phi_size, psi_size) for t, a in zip(angle_type, angle_slice)]
-            mat_e = inverse_givens_rotation(
-                nr, nc, angle_slice, angle_type, angle_index
-            )
-            v[subc] = mat_e
-            # check if v is unitary
-            assert np.all((np.sum(np.abs(mat_e)**2, axis=0)-1)<1e-5), f"v is not unitary {np.sum(np.abs(mat_e)**2, axis=0)}"
-        
-        # Check for consistency with previous packets
-        if len(vs) > 0:
-            if v.shape != vs[0].shape[1:]:
+            # check VHT or HE
+            category_code = int(raw_hex[96:98], 16)
+            if category_code == 21:
+                # VHT
+                mimo_control_end_idx = 106
+                he_mimo_control = hex_flip(raw_hex[100:mimo_control_end_idx])
+                he_mimo_control_bin = bin(int(he_mimo_control, 16))[2:].zfill(24)
+                codebook_info = int(he_mimo_control_bin[13], 2)
+                bw = int(he_mimo_control_bin[16:18], 2)
+                nr = int(he_mimo_control_bin[18:21], 2) + 1
+                nc = int(he_mimo_control_bin[21:], 2) + 1
+            elif category_code == 30:
+                # HE
+                mimo_control_end_idx = 110
+                he_mimo_control = hex_flip(raw_hex[100:mimo_control_end_idx])
+                he_mimo_control_bin = bin(int(he_mimo_control, 16))[2:].zfill(40)
+                ru_end_index = int(he_mimo_control_bin[11:17], 2)
+                ru_start_index = int(he_mimo_control_bin[17:23], 2)
+                codebook_info = int(he_mimo_control_bin[30], 2)
+                bw = int(he_mimo_control_bin[32:34], 2)
+                nr = int(he_mimo_control_bin[34:37], 2) + 1
+                nc = int(he_mimo_control_bin[37:], 2) + 1
+            else:
                 if verbose:
-                    logger.warning(f"Packet shape mismatch: {v.shape} vs {vs[0].shape[1:]}. Skipping.")
+                    logger.warning(f"Unknown category code: {category_code}. Skipping packet.")
                 continue
-        
-        vs.append(v[np.newaxis])
-        ts.append(timestamp)
+
+            num_snr = nc
+            (phi_size, psi_size) = phi_psi_matching[codebook_info]
+            cbr_hex = hex_flip(raw_hex[mimo_control_end_idx : -8])
+
+            # calc binary splitting rule
+            angle_bits_order = []
+            angle_type = []
+            angle_index = []
+            phi_indices = [0, 0]
+            psi_indices = [1, 0]
+
+            angle_bits_order_len = min([nc, nr - 1]) * (2 * (nr - 1) - min(nc, nr - 1) + 1)
+            if angle_bits_order_len == 0:
+                if verbose:
+                    logger.warning(f"angle_bits_order_len is 0 (nr={nr}, nc={nc}). Skipping packet.")
+                continue
+            cnt = nr - 1
+            while len(angle_bits_order) < angle_bits_order_len:
+                for i in range(cnt):
+                    angle_bits_order.append(phi_size)
+                    angle_type.append("phi")
+                    angle_index.append([phi_indices[0] + i, phi_indices[1]])
+                phi_indices[0] += 1
+                phi_indices[1] += 1
+                for i in range(cnt):
+                    angle_bits_order.append(psi_size)
+                    angle_type.append("psi")
+                    angle_index.append([psi_indices[0] + i, psi_indices[1]])
+                psi_indices[0] += 1
+                psi_indices[1] += 1
+                cnt -= 1
+
+            num_subc = int(
+                (len(cbr_hex) - num_snr * 2)
+                * 4
+                // (phi_size * angle_type.count("phi") + psi_size * angle_type.count("psi"))
+            )
+
+            split_rule = np.zeros(angle_bits_order_len + 1)
+            split_rule[1:] = np.cumsum(angle_bits_order)
+            split_rule = split_rule.astype(np.int32)
+            angle_seq_len = split_rule[-1]
+            cbr, snr = hex_to_quantized_angle(
+                cbr_hex, num_snr, num_subc, angle_seq_len, split_rule
+            )
+
+            # V matrix recovery
+            v = np.zeros((num_subc, nr, nc), dtype=complex)
+            subc_len = len(angle_type)
+            for subc in range(num_subc):
+                angle_slice = cbr[subc * subc_len : (subc + 1) * subc_len]
+                angle_slice = [
+                    quantized_angle_formulas(t, a, phi_size, psi_size)
+                    for t, a in zip(angle_type, angle_slice)
+                ]
+                mat_e = inverse_givens_rotation(
+                    nr, nc, angle_slice, angle_type, angle_index
+                )
+                v[subc] = mat_e
+
+                if validate_unitary:
+                    # expensive; keep off by default
+                    if not np.all((np.sum(np.abs(mat_e) ** 2, axis=0) - 1) < 1e-5):
+                        raise ValueError(
+                            f"V is not unitary: {np.sum(np.abs(mat_e) ** 2, axis=0)}"
+                        )
+
+            # Check for consistency with previous packets
+            if len(vs) > 0 and v.shape != vs[0].shape[1:]:
+                if verbose:
+                    logger.warning(
+                        f"Packet shape mismatch: {v.shape} vs {vs[0].shape[1:]}. Skipping."
+                    )
+                continue
+
+            vs.append(v[np.newaxis])
+            ts.append(timestamp)
+    finally:
+        try:
+            cap.close()
+        except Exception:
+            pass
+
+    if len(vs) == 0:
+        # Keep return types stable even if no packets matched the filter.
+        return np.array([], dtype=np.float64), np.empty((0, 0, 0, 0), dtype=complex)
 
     vs = np.concatenate(vs)
     ts = np.array(ts)
 
     if verbose:
-        logger.info(f'{ts.shape[0]} packets are parsed.')
+        logger.info(f"{ts.shape[0]} packets are parsed.")
 
     return ts, vs
 

@@ -87,12 +87,29 @@ python run_pipeline.py --model swin_t --task activity --data Data/MyDataset --mo
 python run_pipeline.py --mode check --data Data/MyDataset
 ```
 
+Notes for `--mode check`:
+- For PCAP-based runs, `check` mode limits decoding via `num_to_process` (default: 30) to keep the smoke test fast.
+- If your PCAP requires a specific transmitter address filter, set `station_address` in your YAML (or adjust the CLI/config).
+
 **Run Inference on a Specific File:**
 
 ```bash
 # Detailed inference commands are available via the CLI
 wifi-sensing infer --pcap data.pcap --config configs/my_best_model.yaml --address AA:BB:CC:DD:EE:FF
 ```
+
+---
+
+## ✅ Tests
+
+Some environments have globally-installed pytest plugins that are incompatible with Python 3.12.
+To keep the test run deterministic, use the repo wrapper:
+
+```bash
+./scripts/test.sh
+```
+
+(Equivalent: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest`)
 
 ---
 

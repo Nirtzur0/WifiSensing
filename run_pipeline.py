@@ -76,7 +76,12 @@ def main():
     config["batch_size"] = args.batch_size
     config["lr"] = args.lr
     config["cuda_index"] = args.gpu
-    
+
+    # Keep "check" mode fast and deterministic on large PCAPs.
+    # Users can override by setting `num_to_process` explicitly in their YAML.
+    if args.mode == "check" and "num_to_process" not in config:
+        config["num_to_process"] = 30
+
     # Override paths to keep workspace clean
     os.makedirs(args.output_dir, exist_ok=True)
     config["tensorboard_folder"] = os.path.join(args.output_dir, "runs/")
@@ -89,7 +94,8 @@ def main():
     # RF-Crate family usually needs Complex input
     if "crate" in args.model:
         config["format"] = "complex"
-        config["model_input_shape"] = "BCHW"
+        # Complex models expect channel-first (antennas as channels).
+        config["model_input_shape"] = "BCHW-C"
         # Ensure patch sizes exist if not present
         if "patch_size" not in config:
             config["patch_size"] = [10, 8]
@@ -135,6 +141,40 @@ def main():
             "seq_length": config.get("seq_length", 100),
             "stride": config.get("stride", 50)
         }
+
+    # 3.6 (Check Mode) Infer PCAP shape for sensible defaults
+    # This makes `--mode check` work out-of-the-box on the bundled example PCAPs.
+    if args.mode == "check" and config.get("dataset_name") == "pcap":
+        try:
+            from wifi_sensing_lib.backend import csi_backend
+
+            # Pick the first PCAP/PCAPNG found under the dataset path.
+            import glob
+            pcap_candidates = sorted(
+                glob.glob(os.path.join(config["dataset_path"], "**", "*.pcap*"), recursive=True)
+            )
+            if pcap_candidates:
+                station_address = config.get("station_address", "B0:B9:8A:63:55:9C")
+                ts, vs = csi_backend.get_v_matrix(
+                    pcap_candidates[0],
+                    station_address,
+                    num_to_process=config.get("num_to_process", None),
+                    verbose=False,
+                )
+                if getattr(vs, "size", 0) > 0:
+                    subc, nr, nc = vs.shape[1], vs.shape[2], vs.shape[3]
+                    config["in_channels"] = int(nr * nc)
+
+                    # Ensure image_size is compatible with RF-CRATE divisibility constraints.
+                    seq_len = int(config.get("seq_length", 100))
+                    if "patch_size" in config:
+                        patch_w = int(config["patch_size"][1])
+                        if patch_w > 0:
+                            subc = subc - (subc % patch_w)
+                            subc = max(subc, patch_w)
+                    config["image_size"] = [seq_len, int(subc)]
+        except Exception as e:
+            print(f"[!] Shape inference skipped/failed: {e}")
 
     # 4. Save Temporary Config
     temp_config_path = os.path.join(args.output_dir, "current_run_config.yaml")

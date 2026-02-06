@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 from ...backend import csi_backend
 import numpy as np
 import scipy.signal as signal
+import torch.nn.functional as F
 
 class WifiSensingDataset(Dataset):
     """
@@ -17,7 +18,14 @@ class WifiSensingDataset(Dataset):
         # Extract V-Matrices
         # Returns: (timestamps, v_matrices)
         # v_matrices shape: (num_packets, num_subc, nr, nc)
-        self.ts, self.vs = csi_backend.get_v_matrix(pcap_file, address, verbose=True)
+        num_to_process = self.config.get("num_to_process", None)
+        verbose = bool(self.config.get("verbose", False))
+        self.ts, self.vs = csi_backend.get_v_matrix(
+            pcap_file,
+            address,
+            num_to_process=num_to_process,
+            verbose=verbose,
+        )
         self.num_samples = len(self.ts)
         # Sliding Window Configuration
         self.window_size = self.config.get('seq_length', 1)  # Default to 1 (single frame)
@@ -72,6 +80,30 @@ class FeatureReshaper:
         
         # Flatten antenna dim: [B, T, S, Nr*Nc] complex
         batch = batch.reshape(b, t, s, nr*nc)
+
+        # Optional subcarrier resizing to match model config.
+        # Many models assume a fixed width (e.g. RF-CRATE asserts divisibility by patch_size).
+        target_s = None
+        image_size = self.config.get("image_size", None)
+        if isinstance(image_size, (list, tuple)) and len(image_size) >= 2:
+            try:
+                target_s = int(image_size[1])
+            except Exception:
+                target_s = None
+        if target_s is None and "num_subcarriers" in self.config:
+            try:
+                target_s = int(self.config["num_subcarriers"])
+            except Exception:
+                target_s = None
+
+        if target_s is not None and target_s > 0 and s != target_s:
+            if s > target_s:
+                start = (s - target_s) // 2
+                batch = batch[:, :, start : start + target_s, :]
+            else:
+                # pad on the right with zeros
+                batch = F.pad(batch, (0, 0, 0, target_s - s))
+            s = target_s
         
         target_fmt = self.target_format
         if target_fmt == 'complex':
@@ -116,7 +148,7 @@ class FeatureReshaper:
         model_shape = self.config.get('model_input_shape', 'BCHW')
         
         if target_fmt == 'complex':
-             if model_shape == 'BCHW-C':
+             if model_shape in ['BCHW', 'BCHW-C']:
                   # [B, Ant, T, S] complex
                   batch = batch.permute(0, 3, 1, 2)
         elif target_fmt in ['dfs', 'dense_dfs', 'dense_dfs_amp']:

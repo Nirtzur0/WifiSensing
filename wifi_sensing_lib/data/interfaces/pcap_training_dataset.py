@@ -180,7 +180,14 @@ class PcapTrainingDataset(Dataset):
             return self.csi_cache[pcap_file]
         
         # Extract CSI using backend
-        ts, vs = csi_backend.get_v_matrix(pcap_file, mac_address, verbose=False)
+        num_to_process = self.config.get("num_to_process", None)
+        verbose = bool(self.config.get("verbose", False))
+        ts, vs = csi_backend.get_v_matrix(
+            pcap_file,
+            mac_address,
+            num_to_process=num_to_process,
+            verbose=verbose,
+        )
         
         # Cache if enabled
         if self.csi_cache is not None:

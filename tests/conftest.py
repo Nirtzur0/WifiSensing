@@ -7,6 +7,16 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 @pytest.fixture(scope="session")
+def num_to_process():
+    """
+    Limits how many matching packets to decode from the PCAP during tests.
+
+    The bundled example PCAP is ~181MB; decoding the full file makes tests slow
+    and can leave `tshark` processes running if the capture isn't closed.
+    """
+    return int(os.environ.get("WIFI_SENSING_TEST_NUM_TO_PROCESS", "30"))
+
+@pytest.fixture(scope="session")
 def pcap_path():
     """
     Returns the absolute path to the local PCAP file for testing.
@@ -39,17 +49,14 @@ def basic_config():
 
 @pytest.fixture
 def station_address():
-    # This might need to be adjusted based on the specific PCAP content
-    # Using the one from previous context or a common one found in that file
-    # If uncertain, we can try to find one dynamically or use a known one.
-    # From context: L_62_A_12_c1_n_1_AP_4x4-2.pcapng was used in CLI with default or explicit address.
-    # Let's use a broadcast or specific if known. 
-    # Previous CLI command context didn't show explicit address, so maybe it matters.
-    # Let's use wildcard or a known one if we can discover it.
-    # For now, let's assume we can filter by the AP-Client link.
-    # Re-using the logic from pcap_dataset which might need an specific address.
-    # If unknown, we can return None and tests can handle it or use a default.
-    return "ff:ff:ff:ff:ff:ff" # Broadcast/All for now
+    """
+    Transmitter address filter used by the backend.
+
+    The sample PCAP in `wifi_sensing_lib/data/local_pcaps/` contains beamforming
+    reports for at least `b0:b9:8a:63:55:9c`. You can override this via
+    `WIFI_SENSING_TEST_STATION_ADDRESS`.
+    """
+    return os.environ.get("WIFI_SENSING_TEST_STATION_ADDRESS", "b0:b9:8a:63:55:9c")
 
 @pytest.fixture
 def rf_crate_config():

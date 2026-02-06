@@ -173,17 +173,34 @@ def run_experiment(config_file, mode=0, cuda_index=0, pretrained_model=None):
         return # Explicit return
         
     cross_domain = False
-    if len(config['data_split']) ==3:
+    if len(config['data_split']) == 3:
         print("The normal indomain experiments!")
         train_ratio = config['data_split'][0]
         val_ratio = config['data_split'][1]
         test_ratio = config['data_split'][2]
         merged_config = {**config, **config['all_dataset']} 
         dataset = dataset_get(merged_config)
-        train_num = int(len(dataset)*train_ratio)
-        val_num = int(len(dataset)*val_ratio)
-        test_num = int(len(dataset)) - train_num - val_num
-        train_set, val_set, test_set = torch.utils.data.random_split(dataset, [train_num, val_num, test_num], generator=rng_generator)
+        dataset_len = len(dataset)
+        if dataset_len <= 0:
+            print("Dataset is empty; cannot start training.")
+            return
+
+        train_num = int(dataset_len * train_ratio)
+        val_num = int(dataset_len * val_ratio)
+
+        # Guard against small datasets (e.g. a single PCAP during a smoke/check run).
+        # DataLoader(RandomSampler) requires a positive-length training set when shuffle=True.
+        if train_num == 0:
+            train_num = 1
+        if train_num + val_num > dataset_len:
+            val_num = max(0, dataset_len - train_num)
+
+        test_num = dataset_len - train_num - val_num
+        train_set, val_set, test_set = torch.utils.data.random_split(
+            dataset,
+            [train_num, val_num, test_num],
+            generator=rng_generator,
+        )
     else:  # used for cross domain experiments
         print("The cross domain experiments!")
         train_set_config = {**config, **config['train_dataset']} 
@@ -196,7 +213,11 @@ def run_experiment(config_file, mode=0, cuda_index=0, pretrained_model=None):
         val_num = int(len(dataset)*(0.2))
         indomain_test_num = int(len(dataset)*(0.2))  # this is used for the in-domain test
         train_num = len(dataset) - val_num - indomain_test_num
-        train_set, val_set, indomain_test_set = torch.utils.data.random_split(dataset, [train_num, val_num, indomain_test_num], generator=rng_generator)
+        train_set, val_set, indomain_test_set = torch.utils.data.random_split(
+            dataset,
+            [train_num, val_num, indomain_test_num],
+            generator=rng_generator,
+        )
         print("finish the train, val, and indomain test loading")
         cross_domain = True
     
@@ -372,12 +393,16 @@ def run_experiment(config_file, mode=0, cuda_index=0, pretrained_model=None):
         # perform the in-domain test
         indomain_test_loader = dataloader_make(indomain_test_set, is_training=False, generator=rng_generator, batch_size=validation_test_batchsize,collate_fn_padd=None, num_workers=config['num_workers'])
         indomain_recordings, indomain_loss_all, indomain_recon_loss_all = inference(model,indomain_test_loader,data_sahpe_coverter,rotary_physcis_prior_embedding,config,device, criterion, metric, decoder=decoder)
-        print(f'Average Loss (in-domain test set) {indomain_loss_all/ len(indomain_test_loader):.10f}, Average Reconstruction Loss (in-domain test set) {indomain_recon_loss_all/ len(indomain_test_loader):.10f}')
+        if len(indomain_test_loader) > 0:
+            print(f'Average Loss (in-domain test set) {indomain_loss_all/ len(indomain_test_loader):.10f}, Average Reconstruction Loss (in-domain test set) {indomain_recon_loss_all/ len(indomain_test_loader):.10f}')
+        else:
+            print('In-domain test set is empty, skipping loss logging.')
         indomain_metric_all = indomain_recordings['metrics']
         if len(indomain_metric_all) > 0:
             indomain_metric_all = np.mean(indomain_metric_all)
             writer.add_scalar('in-domain test metric (per sample)', indomain_metric_all, best_model_epoch)
-        writer.add_scalar('in-domain test loss (per sample)', indomain_loss_all/ len(indomain_test_loader), best_model_epoch)
+        if len(indomain_test_loader) > 0:
+            writer.add_scalar('in-domain test loss (per sample)', indomain_loss_all/ len(indomain_test_loader), best_model_epoch)
         if log_enable:
             indomain_test_result_save_path = config['log_folder']+ log_file_name + '_indomain_test.pkl'
             pickle.dump(indomain_recordings, open(indomain_test_result_save_path, 'wb'))
@@ -394,14 +419,18 @@ def run_experiment(config_file, mode=0, cuda_index=0, pretrained_model=None):
     
     test_loader = dataloader_make(test_set, is_training=False, generator=rng_generator, batch_size=validation_test_batchsize,collate_fn_padd=None, num_workers=config['num_workers'])
     recordings, loss_all, recon_loss_all = inference(model,test_loader,data_sahpe_coverter,rotary_physcis_prior_embedding,config,device, criterion, metric, decoder=decoder)
-    print(f'Average Loss (test set) {loss_all/ len(test_loader):.10f}, Average Reconstruction Loss (test set) {recon_loss_all/ len(test_loader):.10f}')
+    if len(test_loader) > 0:
+        print(f'Average Loss (test set) {loss_all/ len(test_loader):.10f}, Average Reconstruction Loss (test set) {recon_loss_all/ len(test_loader):.10f}')
+    else:
+        print('Test set is empty, skipping loss logging.')
     metric_all = recordings['metrics']
     if len(metric_all) > 0:
         metric_all = np.mean(metric_all)
         writer.add_scalar('test metric (per sample)', metric_all, best_model_epoch)
-    writer.add_scalar('test loss (per sample)', loss_all/ len(test_loader), best_model_epoch)
-    if config['model_name'] == 'rf_crate_recon':
-        writer.add_scalar('test recon loss (per sample)', recon_loss_all/ len(test_loader), best_model_epoch)
+    if len(test_loader) > 0:
+        writer.add_scalar('test loss (per sample)', loss_all/ len(test_loader), best_model_epoch)
+        if config['model_name'] == 'rf_crate_recon':
+            writer.add_scalar('test recon loss (per sample)', recon_loss_all/ len(test_loader), best_model_epoch)
     writer.close()
     if log_enable:
         test_result_save_path = config['log_folder']+ log_file_name + '.pkl'
