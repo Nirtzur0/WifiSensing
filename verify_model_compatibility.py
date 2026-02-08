@@ -21,7 +21,11 @@ def verify_models():
         'label_type': 'activity',
         'seq_length': 100,  # Standard length
         'stride': 50,
-        'station_filter': None
+        'station_filter': None,
+        # Keep compatibility checks fast: decode a bounded number of BFR frames from the PCAP.
+        # The sample PCAP has many VHT BFR packets; decoding the full file via tshark can be slow.
+        'num_to_process': 300,
+        'verbose': False,
     }
     
     try:
@@ -81,13 +85,13 @@ def verify_models():
                 model_config['in_channels'] = 1 
                 
             elif 'stfnet' in model_name:
-                # STFNet: [B, T, C] input. 
-                target_format = 'amplitude' 
+                # STFNet expects [B, T, C] (time-major sequence with flattened features).
+                target_format = 'amplitude'
                 reshaper_config = {
                     'format': 'amplitude', 
-                    'model_input_shape': 'BCHW',  # Assuming [B, C, T, F] or [B, C, H, W]
+                    'model_input_shape': 'BLC',
                 }
-                # We'll set dimensions after reshape
+                # We'll set dimensions after reshape.
                 
             elif 'rf_net' in model_name:
                  target_format = 'amplitude' 
@@ -146,18 +150,14 @@ def verify_models():
                 model_input = reshaper.shape_convert(batch_raw_to_use)
                 print(f"   Reshaped Input: {model_input.shape}")
                 
-                # STFNet Reshape Logic: [B, C, H, W] -> [B, T, C*F]
-                if 'stfnet' in model_name and len(model_input.shape) == 4:
-                     b, c, t, f = model_input.shape
-                     model_input = model_input.permute(0, 2, 1, 3).reshape(b, t, c*f)
-                     
-                     # Truncate to 544 channels if needed to match model expectations
-                     # 544 seems to be a safe multiple used by model internals
-                     if model_input.shape[2] > 544:
-                         model_input = model_input[:, :, :544]
-                         print(f"   Adjusted STFNet Input to [B, T, 544]: {model_input.shape}")
-                     else:
-                         print(f"   Adjusted STFNet Input to [B, T, C]: {model_input.shape}")
+                # STFNet: ensure the feature dimension is compatible with the FFT-branch split.
+                # The current implementation assumes C is divisible by 8.
+                if 'stfnet' in model_name and len(model_input.shape) == 3:
+                     b, t, c = model_input.shape
+                     c8 = (c // 8) * 8
+                     if c8 != c:
+                         model_input = model_input[:, :, :c8]
+                         print(f"   Truncated STFNet feature dim from {c} to {c8}: {model_input.shape}")
 
                 # RFNet Reshape Logic: [B, C, H, W] -> [B, H, C*W]
                 if 'rf_net' in model_name and len(model_input.shape) == 4:
@@ -208,7 +208,7 @@ def verify_models():
                       # We flattened C*F -> C_total.
                       # Let's set sensor_num=1, in_channels=C_total.
                       model_config['sensor_num'] = 1
-                      model_config['feature_dim'] = model_input.shape[2] 
+                      model_config['feature_dim'] = model_input.shape[2]
                       model_config['in_channels'] = model_input.shape[2]
 
                  elif 'rf_net' in model_name:

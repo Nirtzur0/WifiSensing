@@ -53,12 +53,17 @@ def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False, validat
     - Always closes the underlying capture to avoid leaking `tshark` processes.
     """
 
+    # IMPORTANT:
+    # Don't slice fixed offsets out of `frame_raw` (radiotap header length varies).
+    # Instead, rely on Wireshark's decoded management fields (wlan.mgt.*),
+    # which are stable across link-layer encapsulations.
     cap = pyshark.FileCapture(
         pcap_file,
-        # Wireshark display filter syntax prefers `and` over shell-style `&&`.
+        # "Action No Ack" management frames are subtype 0x000e in Wireshark.
+        # These frames commonly carry VHT/HE compressed beamforming feedback.
         display_filter=f"wlan.fc.type_subtype == 0x000e and wlan.ta == {address}",
-        use_json=True,
-        include_raw=True,
+        use_json=False,
+        include_raw=False,
         keep_packets=False,
     )
     p = cap._packets_from_tshark_sync()
@@ -84,8 +89,6 @@ def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False, validat
             if verbose:
                 logger.info(f"parsing {p_cnt} packets...")
 
-            raw_hex = packet.frame_raw.value
-
             # timestamp
             try:
                 timestamp = float(packet.frame_info.time_epoch)
@@ -103,36 +106,65 @@ def get_v_matrix(pcap_file, address, num_to_process=None, verbose=False, validat
                 dt = datetime.fromisoformat(ts_str)
                 timestamp = dt.timestamp()
 
+            # Pull decoded management fields (preferred).
+            # Some packets may not decode as wlan.mgt; skip those.
+            try:
+                mgt = packet["wlan.mgt"]
+            except Exception:
+                if verbose:
+                    logger.warning("Packet missing wlan.mgt layer; skipping.")
+                continue
+
+            try:
+                category_code = int(mgt.wlan_fixed_category_code)
+            except Exception:
+                if verbose:
+                    logger.warning("Missing/invalid wlan_fixed_category_code; skipping.")
+                continue
+
             # check VHT or HE
-            category_code = int(raw_hex[96:98], 16)
             if category_code == 21:
-                # VHT
-                mimo_control_end_idx = 106
-                he_mimo_control = hex_flip(raw_hex[100:mimo_control_end_idx])
-                he_mimo_control_bin = bin(int(he_mimo_control, 16))[2:].zfill(24)
-                codebook_info = int(he_mimo_control_bin[13], 2)
-                bw = int(he_mimo_control_bin[16:18], 2)
-                nr = int(he_mimo_control_bin[18:21], 2) + 1
-                nc = int(he_mimo_control_bin[21:], 2) + 1
+                # VHT compressed beamforming report
+                try:
+                    codebook_info = int(str(mgt.wlan_vht_mimo_control_codebookinfo), 16)
+                    bw = int(str(mgt.wlan_vht_mimo_control_chanwidth), 16)
+                    nr = int(str(mgt.wlan_vht_mimo_control_nrindex), 16) + 1
+                    nc = int(str(mgt.wlan_vht_mimo_control_ncindex), 16) + 1
+                    cbr_hex = str(mgt.wlan_vht_compressed_beamforming_report)
+                except Exception as e:
+                    if verbose:
+                        logger.warning(f"VHT fields missing/invalid; skipping. err={e}")
+                    continue
             elif category_code == 30:
-                # HE
-                mimo_control_end_idx = 110
-                he_mimo_control = hex_flip(raw_hex[100:mimo_control_end_idx])
-                he_mimo_control_bin = bin(int(he_mimo_control, 16))[2:].zfill(40)
-                ru_end_index = int(he_mimo_control_bin[11:17], 2)
-                ru_start_index = int(he_mimo_control_bin[17:23], 2)
-                codebook_info = int(he_mimo_control_bin[30], 2)
-                bw = int(he_mimo_control_bin[32:34], 2)
-                nr = int(he_mimo_control_bin[34:37], 2) + 1
-                nc = int(he_mimo_control_bin[37:], 2) + 1
+                # HE compressed beamforming report
+                # Not all tshark builds expose the same HE field names; for now we require
+                # the HE MIMO control and compressed matrices field to be present.
+                try:
+                    he_mimo_control = str(mgt.wlan_he_action_he_mimo_control)
+                    he_mimo_control_bin = bin(int(he_mimo_control, 16))[2:].zfill(40)
+                    ru_end_index = int(he_mimo_control_bin[11:17], 2)
+                    ru_start_index = int(he_mimo_control_bin[17:23], 2)
+                    codebook_info = int(he_mimo_control_bin[30], 2)
+                    bw = int(he_mimo_control_bin[32:34], 2)
+                    nr = int(he_mimo_control_bin[34:37], 2) + 1
+                    nc = int(he_mimo_control_bin[37:], 2) + 1
+                    # Best-effort: use the generic compressed BF matrices bytes if available.
+                    # This may differ from the legacy raw slicing format.
+                    cbr_hex = str(mgt.wlan_mimo_csimatrices_cbf)
+                except Exception as e:
+                    if verbose:
+                        logger.warning(f"HE fields missing/invalid; skipping. err={e}")
+                    continue
             else:
                 if verbose:
                     logger.warning(f"Unknown category code: {category_code}. Skipping packet.")
                 continue
 
+            # Normalize hex payload (pyshark sometimes inserts ':' separators).
+            cbr_hex = cbr_hex.replace(":", "").replace(" ", "").lower()
+
             num_snr = nc
             (phi_size, psi_size) = phi_psi_matching[codebook_info]
-            cbr_hex = hex_flip(raw_hex[mimo_control_end_idx : -8])
 
             # calc binary splitting rule
             angle_bits_order = []
